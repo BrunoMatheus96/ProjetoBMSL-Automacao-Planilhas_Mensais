@@ -1,4 +1,4 @@
-# Projeto
+# Detalhes do projeto
 
 ## Objetivo
 
