@@ -1,4 +1,4 @@
-from app.servicos.google_sheets_servico import GoogleSheetsServico
+from src.servicos.google_sheets_servico import GoogleSheetsServico
 
 
 def sincronizar(sheet_id_mes, sheet_id_controle):
