@@ -101,19 +101,13 @@ class GoogleDriveServico:
             print(f"Erro no renomear_arquivo em google_drive_servico.py: {e}")
 
     def buscar_arquivo_na_pasta(self, nome, folder_id):
-        try:
-            results = (
-                self.service.files()
-                .list(
-                    q=f"name = '{nome}' and '{folder_id}' in parents and trashed=false",
-                    fields="files(id, name)",
-                )
-                .execute()
-            )
 
-            files = results.get("files", [])
-            return files[0] if files else None
+        if not folder_id or not isinstance(folder_id, str):
+            raise Exception(f"folder_id inválido: {folder_id}")
 
-        except Exception as e:
-            print(f"Erro em buscar_arquivo_na_pasta: {e}")
-            return None
+        query = f"name = '{nome}' and '{folder_id}' in parents and trashed=false"
+
+        results = self.service.files().list(q=query).execute()
+
+        files = results.get("files", [])
+        return files[0] if files else None

@@ -8,56 +8,72 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 class GoogleSheetsServico:
 
     def __init__(self):
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        ROOT_DIR = os.path.dirname(BASE_DIR)
+
+        JSON_DIR = os.path.join(ROOT_DIR, "autenticacoes", "arquivos_json")
+
+        CREDENCIAIS_PATH = os.path.join(JSON_DIR, "google_sheets_credenciais.json")
+        TOKEN_PATH = os.path.join(JSON_DIR, "token.json")
+
+        SCOPES = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+
+        if not os.path.exists(CREDENCIAIS_PATH):
+            raise Exception(f"Arquivo não encontrado: {CREDENCIAIS_PATH}")
+
+        creds = None
+
+        if os.path.exists(TOKEN_PATH):
+            creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+
+        if not creds or not creds.valid:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENCIAIS_PATH, SCOPES)
+            creds = flow.run_local_server(port=0)
+
+            with open(TOKEN_PATH, "w") as token:
+                token.write(creds.to_json())
+
+        self.client = gspread.authorize(creds)
+
+    def esperar_planilha(self, spreadsheet_id):
         try:
-            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-            ROOT_DIR = os.path.dirname(BASE_DIR)
+            if not hasattr(self, "_cache"):
+                self._cache = {}
 
-            JSON_DIR = os.path.join(ROOT_DIR, "autenticacoes", "arquivos_json")
+            if spreadsheet_id in self._cache:
+                return self._cache[spreadsheet_id]
 
-            CREDENCIAIS_PATH = os.path.join(JSON_DIR, "google_sheets_credenciais.json")
-            TOKEN_PATH = os.path.join(JSON_DIR, "token.json")
+            planilha = self.client.open_by_key(spreadsheet_id)
+            self._cache[spreadsheet_id] = planilha
 
-            SCOPES = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive",
-            ]
-
-            if not os.path.exists(CREDENCIAIS_PATH):
-                raise Exception(f"Arquivo não encontrado: {CREDENCIAIS_PATH}")
-
-            creds = None
-
-            # 🔹 Carrega token
-            if os.path.exists(TOKEN_PATH):
-                creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-
-            # 🔹 Se inválido, autentica
-            if not creds or not creds.valid:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    CREDENCIAIS_PATH, SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-
-                with open(TOKEN_PATH, "w") as token:
-                    token.write(creds.to_json())
-
-            # 🔹 cria client do gspread usando OAuth
-            self.client = gspread.authorize(creds)
+            print(" ✅Planilha disponível")
+            return planilha
 
         except Exception as e:
-            print(f"Erro no __init__ em google_sheets_servico.py: {e}")
+            print(f" ⌛Erro ao acessar planilha: {e}")
+            time.sleep(2)
 
     def ler_aba(self, spreadsheet_id, nome_aba, tentativas=5):
-        if not spreadsheet_id:
-            raise Exception("❌ spreadsheet_id inválido")
+
+        if not spreadsheet_id or not isinstance(spreadsheet_id, str):
+            raise Exception(f" ❌spreadsheet_id inválido: {spreadsheet_id}")
+
+        if len(spreadsheet_id) < 20:
+            raise Exception(f" ❌ID suspeito: {spreadsheet_id}")
+
+        self.esperar_planilha(spreadsheet_id)
 
         for tentativa in range(tentativas):
             try:
-                print(f"🔍 Tentando acessar planilha: {spreadsheet_id}")
-
                 planilha = self.client.open_by_key(spreadsheet_id)
 
                 abas = planilha.worksheets()
+
+                nomes_abas = [a.title for a in abas]
+                # print(" ➡️Abas encontradas:", nomes_abas)
 
                 aba = next(
                     (
@@ -69,8 +85,7 @@ class GoogleSheetsServico:
                 )
 
                 if not aba:
-                    print(f"⚠️ Aba '{nome_aba}' não encontrada")
-                    return []
+                    raise Exception(f"Aba '{nome_aba}' não encontrada")
 
                 dados = aba.get_all_values()
 
@@ -83,28 +98,52 @@ class GoogleSheetsServico:
                 return [dict(zip(header, linha)) for linha in linhas if any(linha)]
 
             except Exception as e:
-                print(f"🔁 Tentativa {tentativa+1} falhou: {e}")
+                print(f" 🔁Tentativa {tentativa+1} falhou: {e}")
 
-                # Se for 404, provavelmente ID errado → não adianta retry infinito
                 if "404" in str(e):
                     raise Exception(
-                        f"❌ ERRO 404: Planilha não encontrada ou sem acesso. ID usado: {spreadsheet_id}"
+                        f" ❌404: sem acesso ou ID errado: {spreadsheet_id}"
                     )
 
                 time.sleep(2)
 
-        raise Exception("❌ Falhou após várias tentativas")
+        raise Exception(" ❌Falhou após várias tentativas")
 
     def criar_aba(self, spreadsheet_id, nome_aba):
         try:
             planilha = self.client.open_by_key(spreadsheet_id)
 
-            try:
-                planilha.worksheet(nome_aba)
-                print(f"Aba '{nome_aba}' já existe")
-            except:
-                planilha.add_worksheet(title=nome_aba, rows="100", cols="20")
-                print(f"✅ Aba '{nome_aba}' criada")
+            worksheets = planilha.worksheets()
+
+            # se já existe
+            for ws in worksheets:
+                if ws.title == nome_aba:
+                    print(f" 📢Aba '{nome_aba}' já existe")
+                    return ws.id
+
+            # pega última aba como template
+            ultima_aba = worksheets[-1]
+
+            # duplica (cria a nova aba)
+            nova_aba = ultima_aba.duplicate(new_sheet_name=nome_aba)
+
+            # 🔥 RECARREGA LISTA (IMPORTANTE)
+            worksheets = planilha.worksheets()
+
+            # 🔥 PEGA A ABA RECÉM CRIADA
+            nova_ws = next(ws for ws in worksheets if ws.title == nome_aba)
+
+            # 🔥 MOVE PARA A ÚLTIMA POSIÇÃO (FORÇADO)
+            planilha.reorder_worksheets(
+                worksheets_in_desired_order=[
+                    ws for ws in worksheets if ws.title != nome_aba
+                ]
+                + [nova_ws]
+            )
+
+            print(f" ✅Aba '{nome_aba}' criada e movida para última posição")
+
+            return nova_ws.id
 
         except Exception as e:
             print(f"Erro ao criar aba: {e}")
@@ -115,7 +154,7 @@ class GoogleSheetsServico:
             aba = planilha.worksheet(nome_aba)
             planilha.del_worksheet(aba)
 
-            print(f"🗑️ Aba '{nome_aba}' deletada")
+            print(f" 🗑️Aba '{nome_aba}' deletada")
 
         except Exception as e:
             print(f"Erro ao deletar aba: {e}")
@@ -125,7 +164,18 @@ class GoogleSheetsServico:
             planilha = self.client.open_by_key(spreadsheet_id)
             aba = planilha.worksheet(nome_aba)
 
+            dados = aba.get_all_values()
+
+            if dados:
+                existentes = [linha[0] for linha in dados if linha]
+
+                if valores[0] in existentes:
+                    print(f" 📢Linha '{valores[0]}' já existe")
+                    return
+
             aba.append_row(valores)
+
+            print(f" ✅Linha '{valores[0]}' criada")
 
         except Exception as e:
             print(f"Erro ao adicionar linha: {e}")
@@ -140,18 +190,8 @@ class GoogleSheetsServico:
             for i, linha in enumerate(dados):
                 if linha and linha[0] == valor_nome:
                     aba.delete_rows(i + 1)
-                    print(f"🗑️ Linha '{valor_nome}' removida")
+                    print(f" 🗑️Linha '{valor_nome}' removida")
                     break
 
         except Exception as e:
             print(f"Erro ao deletar linha: {e}")
-
-    def esperar_planilha(sheets, spreadsheet_id, tentativas=5):
-        for i in range(tentativas):
-            try:
-                planilha = sheets.client.open_by_key(spreadsheet_id)
-                planilha.worksheets()
-                return
-            except:
-                time.sleep(2)
-        raise Exception("Planilha não ficou disponível a tempo")

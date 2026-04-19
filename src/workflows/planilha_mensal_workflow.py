@@ -1,29 +1,22 @@
-from src.tarefas import listar_arquivos
-from src.tarefas.baixar_arquivo import baixar_arquivo_principal
 from src.tarefas.duplicar_planilha import duplicar_planilha_mes
-from src.tarefas.processar_excel import processar_arquivo
 from src.tarefas.listar_arquivos import listar_arquivos
 from src.tarefas.sincronizar_google_sheet import sincronizar
+import threading
 
 
-def rodar_automacao_mensal():
+def workflow_automacao_mensal():
     try:
-        print("Iniciando automação...")
+        print("▶️Iniciando automação...\n")
 
-        print('⚫Download de Alunos.xlsm')
-        baixar_arquivo_principal()
-        processar_arquivo()
-
-        print("\n⚫Validação")
+        print("⚫Duplicação")
         duplicar_planilha_mes()
 
+        # Passa os IDs para a função
+        print("\n⚫Validação e sincronização da planilhas")
         # Pega os IDs dinamicamente
         sheet_id_mes, sheet_id_controle = listar_arquivos()
-
-        # Passa os IDs para a função
-        print('\n⚫Validação e sincronizando planilhas')
         sincronizar(sheet_id_mes, sheet_id_controle)
 
-        print("\n✅Finalizado")
+        print("\n✅Automação finalizada")
     except Exception as e:
         print(f"Erro em no workflow planilha_mensal_workflow: {e}")
